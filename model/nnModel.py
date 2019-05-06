@@ -205,7 +205,7 @@ class Seq2Seq:
                     embAve = _embAve_score(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens,
                                            self.dataClass.maxSentLen, device=self.device)
                     print("After iters %d: loss = %.3lf; train bleu: %.3lf, embAve: %.3lf; " % (
-                    e * itersPerEpoch + i + 1, loss, bleu, embAve), end='')
+                        e * itersPerEpoch + i + 1, loss, bleu, embAve), end='')
                     if self.dataClass.testSize > 0:
                         X, XLens, Y, YLens = next(testStrem)
                         bleu = _bleu_score(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens,
@@ -217,294 +217,302 @@ class Seq2Seq:
                         speed = (e * itersPerEpoch + i + 1) * batchSize / (time.time() - st)
                         print("%.3lf qa/s; remaining time: %.3lfs;" % (speed, restNum / speed))
 
-        def save(self, path):
-            torch.save({"encoder": self.encoderRNN, "decoder": self.decoderRNN,
-                        "word2id": self.dataClass.word2id, "id2word": self.dataClass.id2word}, path)
-            print('Model saved in "%s".' % path)
+    def save(self, path):
+        torch.save({"encoder": self.encoderRNN, "decoder": self.decoderRNN,
+                    "word2id": self.dataClass.word2id, "id2word": self.dataClass.id2word}, path)
+        print('Model saved in "%s".' % path)
 
-        def _train_step(self, X, XLens, Y, YLens, encoderOptimzer, decoderOptimzer, teacherForcingRatio):
-            encoderOptimzer.zero_grad()
-            decoderOptimzer.zero_grad()
+    def _train_step(self, X, XLens, Y, YLens, encoderOptimzer, decoderOptimzer, teacherForcingRatio):
+        encoderOptimzer.zero_grad()
+        decoderOptimzer.zero_grad()
 
-            loss, nTotal = _calculate_loss(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens, teacherForcingRatio,
-                                           device=self.device)
+        loss, nTotal = _calculate_loss(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens, teacherForcingRatio,
+                                       device=self.device)
 
-            (loss / nTotal).backward()
-            encoderOptimzer.step()
-            decoderOptimzer.step()
+        (loss / nTotal).backward()
+        encoderOptimzer.step()
+        decoderOptimzer.step()
 
-            return loss.item() / nTotal
+        return loss.item() / nTotal
 
-    from model.corpusSolver import seq2id, id2seq, filter_sent
-    class ChatBot:
-        def __init__(self, modelPath, device=torch.device('cpu')):
-            modelDict = torch.load(modelPath)
-            self.encoderRNN, self.decoderRNN = modelDict['encoder'].to(device), modelDict['decoder'].to(device)
-            self.word2id, self.id2word = modelDict['word2id'], modelDict['id2word']
-            self.hiddenSize = self.encoderRNN.hiddenSize
-            self.device = device
 
-            self.encoderRNN.eval(), self.decoderRNN.eval()
+from model.corpusSolver import seq2id, id2seq, filter_sent
 
-        def predictByGreedySearch(self, inputSeq, maxAnswerLength=32, showAttention=False, figsize=(12, 6)):
-            inputSeq = filter_sent(inputSeq)
-            inputSeq = [w for w in jieba.lcut(inputSeq) if w in self.word2id.keys()]
 
-            X = seq2id(self.word2id, inputSeq)
-            XLens = torch.tensor([len(X) + 1], dtype=torch.int, device=self.device)
-            X = X + [eosToken]
-            X = torch.tensor([X], dtype=torch.long, device=self.device)
+class ChatBot:
+    def __init__(self, modelPath, device=torch.device('cpu')):
+        modelDict = torch.load(modelPath)
+        self.encoderRNN, self.decoderRNN = modelDict['encoder'].to(device), modelDict['decoder'].to(device)
+        self.word2id, self.id2word = modelDict['word2id'], modelDict['id2word']
+        self.hiddenSize = self.encoderRNN.hiddenSize
+        self.device = device
 
-            d = int(self.encoderRNN.bidirectional) + 1
-            hidden = torch.zeros((d * self.encoderRNN.numLayers, 1, self.hiddenSize), dtype=torch.float32,
-                                 device=self.device)
-            encoderOutput, hidden = self.encoderRNN(X, XLens, hidden)
-            hidden = hidden[-d * self.decoderRNN.numLayers::2].contiguous()
+        self.encoderRNN.eval(), self.decoderRNN.eval()
 
-            attentionArrs = []
-            Y = []
-            decoderInput = torch.tensor([[sosToken]], dtype=torch.long, device=self.device)
-            while decoderInput.item() != eosToken and len(Y) < maxAnswerLength:
-                decoderOutput, hidden, decoderAttentionWeight = self.decoderRNN(decoderInput, hidden, encoderOutput)
-                topv, topi = decoderOutput.topk(1)
-                decoderInput = topi[:, :, 0]
-                attentionArrs.append(decoderAttentionWeight.data.cpu().numpy().reshape(1, XLens))
-                Y.append(decoderInput.item())
-            outputSeq = id2seq(self.id2word, Y)
-            if showAttention:
-                attentionArrs = np.vstack(attentionArrs)
-                fig = plt.figure(figsize=figsize)
-                ax = fig.add_subplot('111')
-                cax = ax.matshow(attentionArrs, cmap='bone')
-                fig.colorbar(cax)
-                ax.set_xticklabels(['', '<SOS>'] + inputSeq)
-                ax.set_yticklabels([''] + outputSeq)
-                ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
-                ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
-                plt.show()
-            return ''.join(outputSeq[:-1])
+    def predictByGreedySearch(self, inputSeq, maxAnswerLength=32, showAttention=False, figsize=(12, 6)):
+        inputSeq = filter_sent(inputSeq)
+        inputSeq = [w for w in jieba.lcut(inputSeq) if w in self.word2id.keys()]
 
-        def predictByBeamSearch(self, inputSeq, beamWidth=10, maxAnswerLength=32, alpha=0.7, isRandomChoose=False,
-                                allRandomChoose=False, improve=True, showInfo=False):
-            outputSize = len(self.id2word)
-            inputSeq = filter_sent(inputSeq)
-            inputSeq = [w for w in jieba.lcut(inputSeq) if w in self.word2id.keys()]
+        X = seq2id(self.word2id, inputSeq)
+        XLens = torch.tensor([len(X) + 1], dtype=torch.int, device=self.device)
+        X = X + [eosToken]
+        X = torch.tensor([X], dtype=torch.long, device=self.device)
 
-            X = seq2id(self.word2id, inputSeq)
-            XLens = torch.tensor([len(X) + 1], dtype=torch.int, device=self.device)
-            X = X + [eosToken]
-            X = torch.tensor([X], dtype=torch.long, device=self.device)
+        d = int(self.encoderRNN.bidirectional) + 1
+        hidden = torch.zeros((d * self.encoderRNN.numLayers, 1, self.hiddenSize), dtype=torch.float32,
+                             device=self.device)
+        encoderOutput, hidden = self.encoderRNN(X, XLens, hidden)
+        hidden = hidden[-d * self.decoderRNN.numLayers::2].contiguous()
 
-            d = int(self.encoderRNN.bidirectional) + 1
-            hidden = torch.zeros((d * self.encoderRNN.numLayers, 1, self.hiddenSize), dtype=torch.float32,
-                                 device=self.device)
-            encoderOutput, hidden = self.encoderRNN(X, XLens, hidden)
-            hidden = hidden[-d * self.decoderRNN.numLayers::2].contiguous()
-
-            Y = np.ones([beamWidth, maxAnswerLength], dtype='int32') * eosToken
-            # prob: beamWidth × 1
-            prob = np.zeros([beamWidth, 1], dtype='float32')
-            decoderInput = torch.tensor([[sosToken]], dtype=torch.long, device=self.device)
-            # decoderOutput: 1 × 1 × outputSize; hidden: numLayers × 1 × hiddenSize
+        attentionArrs = []
+        Y = []
+        decoderInput = torch.tensor([[sosToken]], dtype=torch.long, device=self.device)
+        while decoderInput.item() != eosToken and len(Y) < maxAnswerLength:
             decoderOutput, hidden, decoderAttentionWeight = self.decoderRNN(decoderInput, hidden, encoderOutput)
-            # topv: 1 × 1 × beamWidth; topi: 1 × 1 × beamWidth
-            topv, topi = decoderOutput.topk(beamWidth)
-            # decoderInput: beamWidth × 1
-            decoderInput = topi.view(beamWidth, 1)
-            for i in range(beamWidth):
-                Y[i, 0] = decoderInput[i].item()
-            Y_ = Y.copy()
-            prob += topv.view(beamWidth, 1).data.cpu().numpy()
-            prob_ = prob.copy()
-            # hidden: numLayers × beamWidth × hiddenSize
-            hidden = hidden.expand(-1, beamWidth, -1).contiguous()
-            localRestId = np.array([i for i in range(beamWidth)], dtype='int32')
-            encoderOutput = encoderOutput.expand(beamWidth, -1, -1)  # => beamWidth × 1 × hiddenSize
-            for i in range(1, maxAnswerLength):
-                # decoderOutput: beamWidth × 1 × outputSize; hidden: numLayers × beamWidth × hiddenSize; decoderAttentionWeight: beamWidth × 1 × XSeqLen
-                decoderOutput, hidden, decoderAttentionWeight = self.decoderRNN(decoderInput, hidden, encoderOutput)
-                # topv: beamWidth × 1; topi: beamWidth × 1
-                if improve:
-                    decoderOutput = decoderOutput.view(-1, 1)
-                    if allRandomChoose:
-                        topv, topi = self._random_pick_k_by_prob(decoderOutput, k=beamWidth)
-                    else:
-                        topv, topi = decoderOutput.topk(beamWidth, dim=0)
+            topv, topi = decoderOutput.topk(1)
+            decoderInput = topi[:, :, 0]
+            attentionArrs.append(decoderAttentionWeight.data.cpu().numpy().reshape(1, XLens))
+            Y.append(decoderInput.item())
+        outputSeq = id2seq(self.id2word, Y)
+        if showAttention:
+            attentionArrs = np.vstack(attentionArrs)
+            fig = plt.figure(figsize=figsize)
+            ax = fig.add_subplot('111')
+            cax = ax.matshow(attentionArrs, cmap='bone')
+            fig.colorbar(cax)
+            ax.set_xticklabels(['', '<SOS>'] + inputSeq)
+            ax.set_yticklabels([''] + outputSeq)
+            ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
+            ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+            plt.show()
+        return ''.join(outputSeq[:-1])
+
+    def predictByBeamSearch(self, inputSeq, beamWidth=10, maxAnswerLength=32, alpha=0.7, isRandomChoose=False,
+                            allRandomChoose=False, improve=True, showInfo=False):
+        outputSize = len(self.id2word)
+        inputSeq = filter_sent(inputSeq)
+        inputSeq = [w for w in jieba.lcut(inputSeq) if w in self.word2id.keys()]
+
+        X = seq2id(self.word2id, inputSeq)
+        XLens = torch.tensor([len(X) + 1], dtype=torch.int, device=self.device)
+        X = X + [eosToken]
+        X = torch.tensor([X], dtype=torch.long, device=self.device)
+
+        d = int(self.encoderRNN.bidirectional) + 1
+        hidden = torch.zeros((d * self.encoderRNN.numLayers, 1, self.hiddenSize), dtype=torch.float32,
+                             device=self.device)
+        encoderOutput, hidden = self.encoderRNN(X, XLens, hidden)
+        hidden = hidden[-d * self.decoderRNN.numLayers::2].contiguous()
+
+        Y = np.ones([beamWidth, maxAnswerLength], dtype='int32') * eosToken
+        # prob: beamWidth × 1
+        prob = np.zeros([beamWidth, 1], dtype='float32')
+        decoderInput = torch.tensor([[sosToken]], dtype=torch.long, device=self.device)
+        # decoderOutput: 1 × 1 × outputSize; hidden: numLayers × 1 × hiddenSize
+        decoderOutput, hidden, decoderAttentionWeight = self.decoderRNN(decoderInput, hidden, encoderOutput)
+        # topv: 1 × 1 × beamWidth; topi: 1 × 1 × beamWidth
+        topv, topi = decoderOutput.topk(beamWidth)
+        # decoderInput: beamWidth × 1
+        decoderInput = topi.view(beamWidth, 1)
+        for i in range(beamWidth):
+            Y[i, 0] = decoderInput[i].item()
+        Y_ = Y.copy()
+        prob += topv.view(beamWidth, 1).data.cpu().numpy()
+        prob_ = prob.copy()
+        # hidden: numLayers × beamWidth × hiddenSize
+        hidden = hidden.expand(-1, beamWidth, -1).contiguous()
+        localRestId = np.array([i for i in range(beamWidth)], dtype='int32')
+        encoderOutput = encoderOutput.expand(beamWidth, -1, -1)  # => beamWidth × 1 × hiddenSize
+        for i in range(1, maxAnswerLength):
+            # decoderOutput: beamWidth × 1 × outputSize; hidden: numLayers × beamWidth × hiddenSize; decoderAttentionWeight: beamWidth × 1 × XSeqLen
+            decoderOutput, hidden, decoderAttentionWeight = self.decoderRNN(decoderInput, hidden, encoderOutput)
+            # topv: beamWidth × 1; topi: beamWidth × 1
+            if improve:
+                decoderOutput = decoderOutput.view(-1, 1)
+                if allRandomChoose:
+                    topv, topi = self._random_pick_k_by_prob(decoderOutput, k=beamWidth)
                 else:
-                    topv, topi = (torch.tensor(prob[localRestId], dtype=torch.float32, device=self.device).unsqueeze(
-                        2) + decoderOutput).view(-1, 1).topk(beamWidth, dim=0)
-                # decoderInput: beamWidth × 1
-                decoderInput = topi % outputSize
-
-                idFrom = topi.cpu().view(-1).numpy() // outputSize
-                Y[localRestId, :i + 1] = np.hstack([Y[localRestId[idFrom], :i], decoderInput.cpu().numpy()])
-                prob[localRestId] = prob[localRestId[idFrom]] + topv.data.cpu().numpy()
-                hidden = hidden[:, idFrom, :]
-
-                restId = (decoderInput != eosToken).cpu().view(-1)
-                localRestId = localRestId[restId.numpy().astype('bool')]
-                decoderInput = decoderInput[restId]
-                hidden = hidden[:, restId, :]
-                encoderOutput = encoderOutput[restId]
-                beamWidth = len(localRestId)
-                if beamWidth < 1:
-                    break
-            lens = [i.index(eosToken) if eosToken in i else maxAnswerLength for i in Y.tolist()]
-            ans = [''.join(id2seq(self.id2word, i[:l])) for i, l in zip(Y, lens)]
-            prob = [prob[i, 0] / np.power(lens[i], alpha) for i in range(len(ans))]
-            if isRandomChoose or allRandomChoose:
-                prob = [np.exp(p) for p in prob]
-                prob = [p / sum(prob) for p in prob]
-                if showInfo:
-                    for i in range(len(ans)):
-                        print((ans[i], prob[i]))
-                return random_pick(ans, prob)
+                    topv, topi = decoderOutput.topk(beamWidth, dim=0)
             else:
-                ansAndProb = list(zip(ans, prob))
-                ansAndProb.sort(key=lambda x: x[1], reverse=True)
-                if showInfo:
-                    for i in ansAndProb:
-                        print(i)
-                return ansAndProb[0][0]
+                topv, topi = (torch.tensor(prob[localRestId], dtype=torch.float32, device=self.device).unsqueeze(
+                    2) + decoderOutput).view(-1, 1).topk(beamWidth, dim=0)
+            # decoderInput: beamWidth × 1
+            decoderInput = topi % outputSize
 
-        def evaluate(self, dataClass, batchSize=128, isDataEnhance=False, dataEnhanceRatio=0.2, streamType='train'):
-            dataClass.reset_word_id_map(self.id2word, self.word2id)
-            dataStream = dataClass.one_epoch_data_stream(batchSize=batchSize, isDataEnhance=isDataEnhance,
-                                                         dataEnhanceRatio=dataEnhanceRatio, type=streamType)
-            bleuScore, embAveScore = 0.0, 0.0
-            totalSamplesNum = dataClass.trainSampleNum if streamType == 'train' else dataClass.testSampleNum
-            iters = 0
-            st = time.time()
-            while True:
-                try:
-                    X, XLens, Y, YLens = next(dataStream)
-                except:
-                    break
-                bleuScore += _bleu_score(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens, dataClass.maxSentLen,
-                                         self.device, mean=False)
-                embAveScore += _embAve_score(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens, dataClass.maxSentLen,
-                                             self.device, mean=False)
-                iters += len(X)
-                finishedRatio = iters / totalSamplesNum
-                print('Finished %.3lf%%; remaining time: %.3lfs' % (
-                finishedRatio * 100.0, (time.time() - st) * (1.0 - finishedRatio) / finishedRatio))
-            return bleuScore / totalSamplesNum, embAveScore / totalSamplesNum
+            idFrom = topi.cpu().view(-1).numpy() // outputSize
+            Y[localRestId, :i + 1] = np.hstack([Y[localRestId[idFrom], :i], decoderInput.cpu().numpy()])
+            prob[localRestId] = prob[localRestId[idFrom]] + topv.data.cpu().numpy()
+            hidden = hidden[:, idFrom, :]
 
-        def _random_pick_k_by_prob(self, decoderOutput, k):
-            # decoderOutput: beamWidth*outputSize × 1
-            df = pd.DataFrame([[i] for i in range(len(decoderOutput))])
-            prob = torch.softmax(decoderOutput.data, dim=0).cpu().numpy().reshape(-1)
-            topi = torch.tensor(np.array(df.sample(n=k, weights=prob)), dtype=torch.long, device=self.device)
-            return decoderOutput[topi.view(-1)], topi
-
-    def random_pick(sample, prob):
-        x = random.uniform(0, 1)
-        cntProb = 0.0
-        for sampleItem, probItem in zip(sample, prob):
-            cntProb += probItem
-            if x < cntProb: break
-        return sampleItem
-
-    def _bleu_score(encoderRNN, decoderRNN, X, XLens, Y, YLens, maxSentLen, device, mean=True):
-        Y_pre = _calculate_Y_pre(encoderRNN, decoderRNN, X, XLens, Y, maxSentLen, teacherForcingRatio=0, device=device)
-        Y = [list(Y[i])[:YLens[i] - 1] for i in range(len(YLens))]
-        Y_pre = Y_pre.cpu().data.numpy()
-        Y_preLens = [list(i).index(0) if 0 in i else len(i) for i in Y_pre]
-        Y_pre = [list(Y_pre[i])[:Y_preLens[i]] for i in range(len(Y_preLens))]
-        bleuScore = [sentence_bleu([i], j, weights=(1, 0, 0, 0)) for i, j in zip(Y, Y_pre)]
-        return np.mean(bleuScore) if mean else np.sum(bleuScore)
-
-    def _embAve_score(encoderRNN, decoderRNN, X, XLens, Y, YLens, maxSentLen, device, mean=True):
-        Y_pre = _calculate_Y_pre(encoderRNN, decoderRNN, X, XLens, Y, maxSentLen, teacherForcingRatio=0, device=device)
-        Y_pre = Y_pre.data
-        Y_preLens = [list(i).index(0) if 0 in i else len(i) for i in Y_pre]
-
-        emb = encoderRNN.embedding
-        Y, Y_pre = emb(torch.tensor(Y, dtype=torch.long, device=device)).cpu().data.numpy(), emb(
-            Y_pre).cpu().data.numpy()
-
-        sentVec = np.array([np.mean(Y[i, :YLens[i]], axis=0) for i in range(len(Y))], dtype='float32')
-        sent_preVec = np.array([np.mean(Y_pre[i, :Y_preLens[i]], axis=0) for i in range(len(Y_pre))], dtype='float32')
-
-        embAveScore = np.sum(sentVec * sent_preVec, axis=1) / (
-        np.sqrt(np.sum(np.square(sentVec), axis=1)) * np.sqrt(np.sum(np.square(sent_preVec), axis=1)))
-        return np.mean(embAveScore) if mean else np.sum(embAveScore)
-
-    def _calculate_loss(encoderRNN, decoderRNN, X, XLens, Y, YLens, teacherForcingRatio, device):
-        featureSize, hiddenSize = encoderRNN.featureSize, encoderRNN.hiddenSize
-        # X: batchSize × XSeqLen; Y: batchSize × YSeqLen
-        X, Y = torch.tensor(X, dtype=torch.long, device=device), torch.tensor(Y, dtype=torch.long, device=device)
-        XLens, YLens = torch.tensor(XLens, dtype=torch.int, device=device), torch.tensor(YLens, dtype=torch.int,
-                                                                                         device=device)
-
-        batchSize = X.size(0)
-        XSeqLen, YSeqLen = X.size(1), YLens.max().item()
-        encoderOutput = torch.zeros((batchSize, XSeqLen, featureSize), dtype=torch.float32, device=device)
-
-        d = int(encoderRNN.bidirectional) + 1
-        hidden = torch.zeros((d * encoderRNN.numLayers, batchSize, hiddenSize), dtype=torch.float32, device=device)
-
-        XLens, indices = torch.sort(XLens, descending=True)
-        _, desortedIndices = torch.sort(indices, descending=False)
-        encoderOutput, hidden = encoderRNN(X[indices], XLens, hidden)
-        encoderOutput, hidden = encoderOutput[desortedIndices], hidden[-d * decoderRNN.numLayers::d, desortedIndices,
-                                                                :]  # hidden[:decoderRNN.numLayers, desortedIndices, :]
-        decoderInput = torch.tensor([[sosToken] for i in range(batchSize)], dtype=torch.long, device=device)
-        loss, nTotal = 0, 0
-        for i in range(YSeqLen):
-            # decoderOutput: batchSize × 1 × outputSize
-            decoderOutput, hidden, decoderAttentionWeight = decoderRNN(decoderInput, hidden, encoderOutput)
-            loss += F.nll_loss(decoderOutput[:, 0, :], Y[:, i], reduction='sum')
-            nTotal += len(decoderInput)
-            if random.random() < teacherForcingRatio:
-                decoderInput = Y[:, i:i + 1]
-            else:
-                topv, topi = decoderOutput.topk(1)
-                decoderInput = topi[:, :, 0]  # topi.squeeze().detach()
-            restId = (YLens > i + 1).view(-1)
+            restId = (decoderInput != eosToken).cpu().view(-1)
+            localRestId = localRestId[restId.numpy().astype('bool')]
             decoderInput = decoderInput[restId]
             hidden = hidden[:, restId, :]
             encoderOutput = encoderOutput[restId]
-            Y = Y[restId]
-            YLens = YLens[restId]
-        return loss, nTotal
-
-    def _calculate_Y_pre(encoderRNN, decoderRNN, X, XLens, Y, YMaxLen, teacherForcingRatio, device):
-        featureSize, hiddenSize = encoderRNN.featureSize, encoderRNN.hiddenSize
-        # X: batchSize × XSeqLen; Y: batchSize × YSeqLen
-        X, Y = torch.tensor(X, dtype=torch.long, device=device), torch.tensor(Y, dtype=torch.long, device=device)
-        XLens = torch.tensor(XLens, dtype=torch.int, device=device)
-
-        batchSize = X.size(0)
-        XSeqLen = X.size(1)
-        encoderOutput = torch.zeros((batchSize, XSeqLen, featureSize), dtype=torch.float32, device=device)
-
-        d = int(encoderRNN.bidirectional) + 1
-        hidden = torch.zeros((d * encoderRNN.numLayers, batchSize, hiddenSize), dtype=torch.float32, device=device)
-
-        XLens, indices = torch.sort(XLens, descending=True)
-        _, desortedIndices = torch.sort(indices, descending=False)
-        encoderOutput, hidden = encoderRNN(X[indices], XLens, hidden)
-        encoderOutput, hidden = encoderOutput[desortedIndices], hidden[-d * decoderRNN.numLayers::d, desortedIndices,
-                                                                :]  # hidden[:decoderRNN.numLayers, desortedIndices, :]
-        decoderInput = torch.tensor([[sosToken] for i in range(batchSize)], dtype=torch.long, device=device)
-        Y_pre, localRestId = torch.ones([batchSize, YMaxLen], dtype=torch.long, device=device) * eosToken, torch.tensor(
-            [i for i in range(batchSize)], dtype=torch.long, device=device)
-        for i in range(YMaxLen):
-            # decoderOutput: batchSize × 1 × outputSize
-            decoderOutput, hidden, decoderAttentionWeight = decoderRNN(decoderInput, hidden, encoderOutput)
-            if random.random() < teacherForcingRatio:
-                decoderInput = Y[:, i:i + 1]
-            else:
-                topv, topi = decoderOutput.topk(1)
-                decoderInput = topi[:, :, 0]  # topi.squeeze().detach()
-            Y_pre[localRestId, i] = decoderInput.squeeze()
-            restId = (decoderInput != eosToken).view(-1)
-            localRestId = localRestId[restId]
-            decoderInput = decoderInput[restId]
-            hidden = hidden[:, restId, :]
-            encoderOutput = encoderOutput[restId]
-            Y = Y[restId]
-            if len(localRestId) < 1:
+            beamWidth = len(localRestId)
+            if beamWidth < 1:
                 break
-        return Y_pre
+        lens = [i.index(eosToken) if eosToken in i else maxAnswerLength for i in Y.tolist()]
+        ans = [''.join(id2seq(self.id2word, i[:l])) for i, l in zip(Y, lens)]
+        prob = [prob[i, 0] / np.power(lens[i], alpha) for i in range(len(ans))]
+        if isRandomChoose or allRandomChoose:
+            prob = [np.exp(p) for p in prob]
+            prob = [p / sum(prob) for p in prob]
+            if showInfo:
+                for i in range(len(ans)):
+                    print((ans[i], prob[i]))
+            return random_pick(ans, prob)
+        else:
+            ansAndProb = list(zip(ans, prob))
+            ansAndProb.sort(key=lambda x: x[1], reverse=True)
+            if showInfo:
+                for i in ansAndProb:
+                    print(i)
+            return ansAndProb[0][0]
+
+    def evaluate(self, dataClass, batchSize=128, isDataEnhance=False, dataEnhanceRatio=0.2, streamType='train'):
+        dataClass.reset_word_id_map(self.id2word, self.word2id)
+        dataStream = dataClass.one_epoch_data_stream(batchSize=batchSize, isDataEnhance=isDataEnhance,
+                                                     dataEnhanceRatio=dataEnhanceRatio, type=streamType)
+        bleuScore, embAveScore = 0.0, 0.0
+        totalSamplesNum = dataClass.trainSampleNum if streamType == 'train' else dataClass.testSampleNum
+        iters = 0
+        st = time.time()
+        while True:
+            try:
+                X, XLens, Y, YLens = next(dataStream)
+            except:
+                break
+            bleuScore += _bleu_score(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens, dataClass.maxSentLen,
+                                     self.device, mean=False)
+            embAveScore += _embAve_score(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens, dataClass.maxSentLen,
+                                         self.device, mean=False)
+            iters += len(X)
+            finishedRatio = iters / totalSamplesNum
+            print('Finished %.3lf%%; remaining time: %.3lfs' % (
+                finishedRatio * 100.0, (time.time() - st) * (1.0 - finishedRatio) / finishedRatio))
+        return bleuScore / totalSamplesNum, embAveScore / totalSamplesNum
+
+    def _random_pick_k_by_prob(self, decoderOutput, k):
+        # decoderOutput: beamWidth*outputSize × 1
+        df = pd.DataFrame([[i] for i in range(len(decoderOutput))])
+        prob = torch.softmax(decoderOutput.data, dim=0).cpu().numpy().reshape(-1)
+        topi = torch.tensor(np.array(df.sample(n=k, weights=prob)), dtype=torch.long, device=self.device)
+        return decoderOutput[topi.view(-1)], topi
+
+
+def random_pick(sample, prob):
+    x = random.uniform(0, 1)
+    cntProb = 0.0
+    for sampleItem, probItem in zip(sample, prob):
+        cntProb += probItem
+        if x < cntProb: break
+    return sampleItem
+
+
+def _bleu_score(encoderRNN, decoderRNN, X, XLens, Y, YLens, maxSentLen, device, mean=True):
+    Y_pre = _calculate_Y_pre(encoderRNN, decoderRNN, X, XLens, Y, maxSentLen, teacherForcingRatio=0, device=device)
+    Y = [list(Y[i])[:YLens[i] - 1] for i in range(len(YLens))]
+    Y_pre = Y_pre.cpu().data.numpy()
+    Y_preLens = [list(i).index(0) if 0 in i else len(i) for i in Y_pre]
+    Y_pre = [list(Y_pre[i])[:Y_preLens[i]] for i in range(len(Y_preLens))]
+    bleuScore = [sentence_bleu([i], j, weights=(1, 0, 0, 0)) for i, j in zip(Y, Y_pre)]
+    return np.mean(bleuScore) if mean else np.sum(bleuScore)
+
+
+def _embAve_score(encoderRNN, decoderRNN, X, XLens, Y, YLens, maxSentLen, device, mean=True):
+    Y_pre = _calculate_Y_pre(encoderRNN, decoderRNN, X, XLens, Y, maxSentLen, teacherForcingRatio=0, device=device)
+    Y_pre = Y_pre.data
+    Y_preLens = [list(i).index(0) if 0 in i else len(i) for i in Y_pre]
+
+    emb = encoderRNN.embedding
+    Y, Y_pre = emb(torch.tensor(Y, dtype=torch.long, device=device)).cpu().data.numpy(), emb(
+        Y_pre).cpu().data.numpy()
+
+    sentVec = np.array([np.mean(Y[i, :YLens[i]], axis=0) for i in range(len(Y))], dtype='float32')
+    sent_preVec = np.array([np.mean(Y_pre[i, :Y_preLens[i]], axis=0) for i in range(len(Y_pre))], dtype='float32')
+
+    embAveScore = np.sum(sentVec * sent_preVec, axis=1) / (
+        np.sqrt(np.sum(np.square(sentVec), axis=1)) * np.sqrt(np.sum(np.square(sent_preVec), axis=1)))
+    return np.mean(embAveScore) if mean else np.sum(embAveScore)
+
+
+def _calculate_loss(encoderRNN, decoderRNN, X, XLens, Y, YLens, teacherForcingRatio, device):
+    featureSize, hiddenSize = encoderRNN.featureSize, encoderRNN.hiddenSize
+    # X: batchSize × XSeqLen; Y: batchSize × YSeqLen
+    X, Y = torch.tensor(X, dtype=torch.long, device=device), torch.tensor(Y, dtype=torch.long, device=device)
+    XLens, YLens = torch.tensor(XLens, dtype=torch.int, device=device), torch.tensor(YLens, dtype=torch.int,
+                                                                                     device=device)
+
+    batchSize = X.size(0)
+    XSeqLen, YSeqLen = X.size(1), YLens.max().item()
+    encoderOutput = torch.zeros((batchSize, XSeqLen, featureSize), dtype=torch.float32, device=device)
+
+    d = int(encoderRNN.bidirectional) + 1
+    hidden = torch.zeros((d * encoderRNN.numLayers, batchSize, hiddenSize), dtype=torch.float32, device=device)
+
+    XLens, indices = torch.sort(XLens, descending=True)
+    _, desortedIndices = torch.sort(indices, descending=False)
+    encoderOutput, hidden = encoderRNN(X[indices], XLens, hidden)
+    encoderOutput, hidden = encoderOutput[desortedIndices], hidden[-d * decoderRNN.numLayers::d, desortedIndices,
+                                                            :]  # hidden[:decoderRNN.numLayers, desortedIndices, :]
+    decoderInput = torch.tensor([[sosToken] for i in range(batchSize)], dtype=torch.long, device=device)
+    loss, nTotal = 0, 0
+    for i in range(YSeqLen):
+        # decoderOutput: batchSize × 1 × outputSize
+        decoderOutput, hidden, decoderAttentionWeight = decoderRNN(decoderInput, hidden, encoderOutput)
+        loss += F.nll_loss(decoderOutput[:, 0, :], Y[:, i], reduction='sum')
+        nTotal += len(decoderInput)
+        if random.random() < teacherForcingRatio:
+            decoderInput = Y[:, i:i + 1]
+        else:
+            topv, topi = decoderOutput.topk(1)
+            decoderInput = topi[:, :, 0]  # topi.squeeze().detach()
+        restId = (YLens > i + 1).view(-1)
+        decoderInput = decoderInput[restId]
+        hidden = hidden[:, restId, :]
+        encoderOutput = encoderOutput[restId]
+        Y = Y[restId]
+        YLens = YLens[restId]
+    return loss, nTotal
+
+
+def _calculate_Y_pre(encoderRNN, decoderRNN, X, XLens, Y, YMaxLen, teacherForcingRatio, device):
+    featureSize, hiddenSize = encoderRNN.featureSize, encoderRNN.hiddenSize
+    # X: batchSize × XSeqLen; Y: batchSize × YSeqLen
+    X, Y = torch.tensor(X, dtype=torch.long, device=device), torch.tensor(Y, dtype=torch.long, device=device)
+    XLens = torch.tensor(XLens, dtype=torch.int, device=device)
+
+    batchSize = X.size(0)
+    XSeqLen = X.size(1)
+    encoderOutput = torch.zeros((batchSize, XSeqLen, featureSize), dtype=torch.float32, device=device)
+
+    d = int(encoderRNN.bidirectional) + 1
+    hidden = torch.zeros((d * encoderRNN.numLayers, batchSize, hiddenSize), dtype=torch.float32, device=device)
+
+    XLens, indices = torch.sort(XLens, descending=True)
+    _, desortedIndices = torch.sort(indices, descending=False)
+    encoderOutput, hidden = encoderRNN(X[indices], XLens, hidden)
+    encoderOutput, hidden = encoderOutput[desortedIndices], hidden[-d * decoderRNN.numLayers::d, desortedIndices,
+                                                            :]  # hidden[:decoderRNN.numLayers, desortedIndices, :]
+    decoderInput = torch.tensor([[sosToken] for i in range(batchSize)], dtype=torch.long, device=device)
+    Y_pre, localRestId = torch.ones([batchSize, YMaxLen], dtype=torch.long, device=device) * eosToken, torch.tensor(
+        [i for i in range(batchSize)], dtype=torch.long, device=device)
+    for i in range(YMaxLen):
+        # decoderOutput: batchSize × 1 × outputSize
+        decoderOutput, hidden, decoderAttentionWeight = decoderRNN(decoderInput, hidden, encoderOutput)
+        if random.random() < teacherForcingRatio:
+            decoderInput = Y[:, i:i + 1]
+        else:
+            topv, topi = decoderOutput.topk(1)
+            decoderInput = topi[:, :, 0]  # topi.squeeze().detach()
+        Y_pre[localRestId, i] = decoderInput.squeeze()
+        restId = (decoderInput != eosToken).view(-1)
+        localRestId = localRestId[restId]
+        decoderInput = decoderInput[restId]
+        hidden = hidden[:, restId, :]
+        encoderOutput = encoderOutput[restId]
+        Y = Y[restId]
+        if len(localRestId) < 1:
+            break
+    return Y_pre
