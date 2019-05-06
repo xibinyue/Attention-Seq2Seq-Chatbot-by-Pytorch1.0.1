@@ -205,14 +205,14 @@ class Seq2Seq:
                     embAve = _embAve_score(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens,
                                            self.dataClass.maxSentLen, device=self.device)
                     print("After iters %d: loss = %.3lf; train bleu: %.3lf, embAve: %.3lf; " % (
-                        e * itersPerEpoch + i + 1, loss, bleu, embAve), end='')
+                        e * itersPerEpoch + i + 1, loss, bleu, embAve))
                     if self.dataClass.testSize > 0:
                         X, XLens, Y, YLens = next(testStrem)
                         bleu = _bleu_score(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens,
                                            self.dataClass.maxSentLen, device=self.device)
                         embAve = _embAve_score(self.encoderRNN, self.decoderRNN, X, XLens, Y, YLens,
                                                self.dataClass.maxSentLen, device=self.device)
-                        print('test bleu: %.3lf, embAve: %.3lf; ' % (bleu, embAve), end='')
+                        print('test bleu: %.3lf, embAve: %.3lf; ' % (bleu, embAve))
                         restNum = ((itersPerEpoch - i - 1) + (epoch - e - 1) * itersPerEpoch) * batchSize
                         speed = (e * itersPerEpoch + i + 1) * batchSize / (time.time() - st)
                         print("%.3lf qa/s; remaining time: %.3lfs;" % (speed, restNum / speed))
